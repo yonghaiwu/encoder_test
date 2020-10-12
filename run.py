@@ -6,20 +6,9 @@ import json
 import seq_list
 import common_cfg
 
-
-#test_seq_set_list = [ 'hevc_classD',]# 'hevc_classC', 'hevc_classD', 'hevc_classE'] # ['hevc_classD'] #
-#rc_mode_list    = ['CQP',] # 'CRF', 'CQP'] # 'ABR', 'CRF', 'CQP'
-#crf_cqp_points  = [22, 27, 32, 37]
-#encoder_list    = ['x264'] # x265, kavazaar, stellar_264, stellar_265
-#preset_list     = ['ultrafast'] #'faster', 'fast', 'medium', 'slow']
-#gop_param_list  = [
-#                    ['ldp', '--bframes 0'], # --keyint 300 
-#                    #['ra',  '--bframes 3'], 
-#                  ]
-
 g_enc_frame_num     = 60
-g_ENABLE_ENCODE     = False #True
-g_ENABLE_CALC_SCORE = False #True
+g_ENABLE_ENCODE     = True
+g_ENABLE_CALC_SCORE = True
 g_ENABLE_CALC_VMAF  = False
 g_ENABLE_PARSING    = True
 
@@ -68,6 +57,11 @@ def func_x265_enc (preset, rc_mode, gop_param, root, yuv_name, width, height, po
         else:
             print ("wrong rc mode {}".format(rc_mode))
             exit(0)
+
+        # for ultrafast preset, need to adjust lookahead frame number to make sure it's not less than Bframe number
+        bframe_num = int(gop_param.split()[1])
+        if (preset == 'ultrafast') and (bframe_num > 5):
+            cmd = cmd + ' --rc-lookahead {}'.format(bframe_num + 1)
         os.system("{} > {} 2>&1 &".format(cmd, enc_log_file))
         cmd_log_file.write(cmd + "\n")
 
@@ -90,7 +84,7 @@ def func_kavazaar_enc (preset, rc_mode, gop_param, root, yuv_name, width, height
         if(g_enc_frame_num != 0 and g_enc_frame_num != -1):
             cmd = cmd + " --frames {}".format(g_enc_frame_num)
         if (rc_mode == 'VBR' or rc_mode == 'ABR'):
-            cmd = cmd + " --bitrate {} -o {}".format(point, stream)
+            cmd = cmd + " --bitrate {} -o {}".format(int(point) * 1000, stream) # kvazaar need bitrate in bps unit
         elif(rc_mode == 'CQP'):
             cmd = cmd + " --qp {} -o {}".format(point, stream)
         else:
@@ -181,7 +175,7 @@ def func_stellar_264_enc (preset, rc_mode, gop_param, root, yuv_name, width, hei
         if data:
             frame_num = int(data.group(1)) + 1
     bit_file_size = float(os.path.getsize(stream))
-    actual_bitrate = (bit_file_size * 30 / frame_num) / 1000 # assume fps= 30, and convert to Kbps
+    actual_bitrate = (bit_file_size * 8 * 30 / frame_num) / 1000 # assume fps= 30, and convert to Kbps
     # step 4: delete bin file, such as PFMT, IDCT
     os.system("del *.bin")
     return [frame_num, speed_in_fps, encoding_time, actual_bitrate]
@@ -231,7 +225,7 @@ def func_stellar_265_enc (preset, rc_mode, gop_param, root, yuv_name, width, hei
             frame_num = int(data.group(1)) + 1
     '''
     bit_file_size = float(os.path.getsize(stream))
-    actual_bitrate = (bit_file_size * 30 / frame_num) / 1000 # assume fps= 30, and convert to Kbps
+    actual_bitrate = (bit_file_size * 8 * 30 / frame_num) / 1000 # assume fps= 30, and convert to Kbps
     
     # step 4: cleanup, delete bin file and rec YUV
     os.system("del *.bin")
@@ -272,10 +266,14 @@ if __name__ == "__main__":
                     enc_log_dir = "{}\\enc_log".format(output_dir)
                     if(os.path.exists(enc_log_dir) == False):
                         os.system("mkdir {}".format(enc_log_dir))
+                    err_log_dir = "{}\\err_log".format(output_dir)
+                    if(os.path.exists(err_log_dir) == False):
+                        os.system("mkdir {}".format(err_log_dir))
 
                     # create command log file for current setting
                     if g_ENABLE_ENCODE == True:
                         cmd_log_file = open("{}/{}_{}_{}_{}_cmd.log".format(cmd_log_dir, encoder, preset, rc_mode, gop_name), "w")
+                        err_log_file = open("{}/{}_{}_{}_{}_err.log".format(err_log_dir, encoder, preset, rc_mode, gop_name), "w")
                     else:
                         cmd_log_file = False
 
@@ -328,8 +326,8 @@ if __name__ == "__main__":
                                     exit(0)
                                 
                                 if(frame_num == -1):
-                                    print ("Encoder error")
-                                    exit(0)
+                                    err_log_file.write("Encoder error for {}\n".format(stream))
+                                    continue
                                 
                             
                                 if g_ENABLE_CALC_SCORE == True:
