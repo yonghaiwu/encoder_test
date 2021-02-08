@@ -8,6 +8,7 @@ import common_cfg
 
 g_enc_frame_num     = 60
 g_ENABLE_ENCODE     = True
+g_ENABLE_ENC_CHECK  = True # for x265 
 g_ENABLE_CALC_SCORE = True
 g_ENABLE_CALC_VMAF  = False
 g_ENABLE_PARSING    = True
@@ -42,10 +43,12 @@ def func_x264_enc (preset, rc_mode, gop_param, root, yuv_name, width, height, po
             return [frame_num, speed_in_fps, -1, actual_bitrate]
     return [-1, -1, -1, -1]
 
-def func_x265_enc (preset, rc_mode, gop_param, root, yuv_name, width, height, point, stream, log_file, cmd_log_file):
+def func_x265_enc (exe_name, extra_param, preset, rc_mode, gop_param, root, yuv_name, width, height, point, stream, log_file, cmd_log_file):
     if g_ENABLE_ENCODE == True:
         # step 1: encode
-        cmd = ".\\binary\\x265.exe --preset {} --fps 30 {}/{} --input-res {}x{} {}".format(preset, root, yuv_name, width, height, gop_param)
+        cmd = ".\\binary\\{}.exe --preset {} --fps 30 {}/{} --input-res {}x{} {}".format(exe_name, preset, root, yuv_name, width, height, gop_param)
+        if g_ENABLE_ENC_CHECK == True:
+            cmd = cmd + " --recon rec.yuv"
         if(g_enc_frame_num != 0 and g_enc_frame_num != -1):
             cmd = cmd + " --frames {}".format(g_enc_frame_num)
         if (rc_mode == 'VBR' or rc_mode == 'ABR'):
@@ -62,6 +65,7 @@ def func_x265_enc (preset, rc_mode, gop_param, root, yuv_name, width, height, po
         bframe_num = int(gop_param.split()[1])
         if (preset == 'ultrafast') and (bframe_num > 5):
             cmd = cmd + ' --rc-lookahead {}'.format(bframe_num + 1)
+        cmd = cmd + ' ' + extra_param
         os.system("{} > {} 2>&1 &".format(cmd, enc_log_file))
         cmd_log_file.write(cmd + "\n")
 
@@ -139,14 +143,16 @@ def func_stellar_264_enc (preset, rc_mode, gop_param, root, yuv_name, width, hei
     if g_ENABLE_ENCODE == True:
         yuv_total_size = os.path.getsize("{}/{}".format(root, yuv_name))
         one_frame_size = int(width) * int(height) * 3 / 2
-        yuv_frame_num = yuv_total_size / one_frame_size
+        yuv_frame_num = int(yuv_total_size / one_frame_size)
         # step 1: generate script
         cmd = ".\\binary\\GenEncScript.exe -Clip {}/{} -Width {} -Height {} -IntraPeriod 250 -ScpFolderPath ./ -EntropyType 1 -DisDBK 0 -Tr8x8 1 -PicFormat 0 {} -o ".format(root, yuv_name, width, height, gop_param, stream)
 
         if(g_enc_frame_num != 0 and g_enc_frame_num != -1):
             cmd = cmd + " -EncFrameNum {}".format(g_enc_frame_num)
+            frame_num = g_enc_frame_num
         else:
             cmd = cmd + " -EncFrameNum {}".format(yuv_frame_num)
+            frame_num = yuv_frame_num
         if(rc_mode == 'CQP'):
             cmd = cmd + " -Qp {}".format(point)
         else:
@@ -165,7 +171,7 @@ def func_stellar_264_enc (preset, rc_mode, gop_param, root, yuv_name, width, hei
         cmd_log_file.write(cmd + "\n")    
     
     # step 3: get encoded frame number (for calc score)
-    frame_num = -1
+    #frame_num = -1
     encoding_time = -1
     speed_in_fps = -1
     actual_bitrate = -1
@@ -176,15 +182,19 @@ def func_stellar_264_enc (preset, rc_mode, gop_param, root, yuv_name, width, hei
             frame_num = int(data.group(1)) + 1
     bit_file_size = float(os.path.getsize(stream))
     actual_bitrate = (bit_file_size * 8 * 30 / frame_num) / 1000 # assume fps= 30, and convert to Kbps
-    # step 4: delete bin file, such as PFMT, IDCT
+    
+    # step 4: cleanup, delete bin file and rec YUV
     os.system("del *.bin")
+    rec_yuv_file = "{}.yuv".format(os.path.splitext(stream)[0])
+    os.system("del {}".format(rec_yuv_file))
+
     return [frame_num, speed_in_fps, encoding_time, actual_bitrate]
 
 def func_stellar_265_enc (preset, rc_mode, gop_param, root, yuv_name, width, height, point, stream, log_file, cmd_log_file):
     if g_ENABLE_ENCODE == True:
         yuv_total_size = os.path.getsize("{}/{}".format(root, yuv_name))
         one_frame_size = int(width) * int(height) * 3 / 2
-        yuv_frame_num = yuv_total_size / one_frame_size
+        yuv_frame_num = int(yuv_total_size / one_frame_size)
         # step 1: generate script
         cmd = ".\\binary\\GenHEVCEncScript.exe -Clip {}/{} -Width {} -Height {} -IntraPeriod 250 -ScpFolderPath ./ -Dbk 1 -Sao 1 -PicFormat 0 {} -o ".format(root, yuv_name, width, height, gop_param, stream)
 
@@ -269,6 +279,9 @@ if __name__ == "__main__":
                     err_log_dir = "{}\\err_log".format(output_dir)
                     if(os.path.exists(err_log_dir) == False):
                         os.system("mkdir {}".format(err_log_dir))
+                    dec_log_dir = "{}\\dec_log".format(output_dir)
+                    if(os.path.exists(dec_log_dir) == False):
+                        os.system("mkdir {}".format(dec_log_dir))
 
                     # create command log file for current setting
                     if g_ENABLE_ENCODE == True:
@@ -314,7 +327,11 @@ if __name__ == "__main__":
                                 if (encoder == 'x264'):
                                     [frame_num, speed_in_fps, encoding_time, actual_bitrate] = func_x264_enc(preset, rc_mode, gop_param, root, yuv_name, width, height, point, stream, enc_log_file, cmd_log_file)
                                 elif (encoder == 'x265'):
-                                    [frame_num, speed_in_fps, encoding_time, actual_bitrate] = func_x265_enc(preset, rc_mode, gop_param, root, yuv_name, width, height, point, stream, enc_log_file, cmd_log_file)
+                                    extra_param = "--aq-mode 0 --rd 1"
+                                    [frame_num, speed_in_fps, encoding_time, actual_bitrate] = func_x265_enc(encoder, extra_param, preset, rc_mode, gop_param, root, yuv_name, width, height, point, stream, enc_log_file, cmd_log_file)
+                                elif (encoder == 'stellar_x265'):
+                                    extra_param = "--aq-mode 0 --rd 1 --no-cu64 --no-intra-nxn --intra-sync-size 32 --no-intra-rdo"
+                                    [frame_num, speed_in_fps, encoding_time, actual_bitrate] = func_x265_enc(encoder, extra_param, preset, rc_mode, gop_param, root, yuv_name, width, height, point, stream, enc_log_file, cmd_log_file)
                                 elif (encoder == 'kavazaar'):
                                     [frame_num, speed_in_fps, encoding_time, actual_bitrate] = func_kavazaar_enc(preset, rc_mode, gop_param, root, yuv_name, width, height, point, stream, enc_log_file, cmd_log_file)
                                 elif (encoder == 'stellar_264'):
@@ -332,12 +349,34 @@ if __name__ == "__main__":
                             
                                 if g_ENABLE_CALC_SCORE == True:
                                     # step 2 decode
+                                    dec_log_file = "{}/{}_enc.log".format(dec_log_dir, test_name_prefix)
                                     dec_yuv = "{}_dec.yuv".format(test_name_prefix)
-                                    dec_cmd = "ffmpeg -i {} -vsync 0  -pix_fmt yuv420p -f rawvideo {} -y -loglevel error".format(stream, dec_yuv)
-                                    os.system(dec_cmd)
+                                    if (encoder == 'stellar_264'):
+                                        # TODO: using ffmpeg to decode will have error
+                                        dec_cmd = ".\\binary\\ldecod.exe -p InputFile=\"{}\" -p OutputFile=\"{}\"".format(stream, dec_yuv)
+                                    else:
+                                        dec_cmd = "ffmpeg -i {} -vsync 0  -pix_fmt yuv420p -f rawvideo {} -y -loglevel error".format(stream, dec_yuv)
+                                    
+                                    os.system("{} > {} 2>&1 & ".format(dec_cmd, dec_log_file))
                                     if g_ENABLE_ENCODE == True:
                                         cmd_log_file.write(dec_cmd + "\n")
+                                        if g_ENABLE_ENC_CHECK == True:
+                                            cmp_result = os.system("cmp rec.yuv {}".format(dec_yuv))
+                                            if cmp_result:
+                                                print ("enc/dec mismatch found\n")
+                                                exit(-1)
+                                            #else:
+                                            #    os.system("pause")
+                                            os.system("rm rec.yuv")
 
+                                    # crop for stellar 264 encoder when height is not 16 aligned
+                                    if (encoder == 'stellar_264' and (height % 16) != 0):
+                                        height_align = height - (height % 16) + 16
+                                        crop_cmd = "ffmpeg -s {}x{} -f rawvideo -pix_fmt yuv420p -i {} -vf crop={}:{}:0:0 dec.yuv -y > nul 2>&1 &".format(width, height_align, dec_yuv, width, height)
+                                        os.system(crop_cmd)
+                                        os.system("del {}".format(dec_yuv))
+                                        os.system("rename dec.yuv {}".format(dec_yuv))
+                                        
                                     # step 3 calculate psnr, ssim and VMAF
                                     basic_cmd = "ffmpeg -s {}x{} -pix_fmt yuv420p -f rawvideo -i {}/{} -s {}x{} -pix_fmt yuv420p -f rawvideo -i {} -frames {}".format(width, height, root, yuv_name, width, height, dec_yuv, frame_num)
                                     psnr_file = "{}/psnr_{}.txt".format(psnr_log_dir, test_name_prefix)

@@ -44,7 +44,7 @@ def get_bitrate_and_score_data(lines):
     
     data_map = {}
     seq_idx = 0
-    seq_num = len(lines) / 4
+    seq_num = int(len(lines) / 4)
     while (seq_idx < seq_num):
         seq_data = [
             lines[4 * seq_idx],
@@ -136,13 +136,18 @@ if __name__ == "__main__":
     anchor_data_map = get_bitrate_and_score_data(anchor_lines[1:])
 
     result_file = open("result.csv", "w")
-    detail_file = open("detail.csv", "w")
     result_file.write ("seq_name, bdrate_psnr_y, bdrate_psnr_a, bdrate_ssim_y, bdrate_ssim_a, bdrate_vmaf, speed improvement in fps\n")
+
+    detail_file = open("detail.csv", "w")
+    detail_file.write("seq_name, bitrate, psnr_y, psnr_a, ssim_y, ssim_a, vmaf, fps,bitrate, psnr_y, psnr_a, ssim_y, ssim_a, vmaf, fps,")
+    detail_file.write("bdrate_psnr_y, bdrate_psnr_a, bdrate_ssim_y, bdrate_ssim_a, bdrate_vmaf, speed improvement in fps\n")
+
     print ("Calc bd-rate: anchor={}".format(anchor_file))
     for test_file in test_file_list:
         test_lines   = open(test_file, 'r').readlines()
         test_data_map = get_bitrate_and_score_data(test_lines[1:])
 
+        # TODO: multiple tests are separated by "=====", what's the better way? multiple sheets in excel?
         #result_file.write("=====================================================================\n")
         result_file.write("{}\n".format(test_file))
         calcBdrate(anchor_data_map, test_data_map, test_file, result_file, detail_file)
